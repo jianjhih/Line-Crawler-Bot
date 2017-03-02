@@ -1,11 +1,16 @@
 #encoding=UTF-8
 
 from flask import Flask, request, abort
+from flask.ext.pymongo import PyMongo
+from datetime import datetime
 import requests
 import json 
 import re
 from bs4 import BeautifulSoup as bs
 from aenum import Enum
+import random
+from bson.json_util import dumps
+from bson.json_util import loads
 
 requests.packages.urllib3.disable_warnings()
 
@@ -19,13 +24,151 @@ class Options(Enum):
 	technews = 7
 	panx = 8
 	help = 9
-
+	
 # 可以直接利用Line提供的SDK來處理
 # from linebot import LineBotApi
 # from linebot.models import TextSendMessage
 
 app = Flask(__name__)
 
+app.config['MONGO_DBNAME'] = 'linebot'
+app.config['MONGO_URI'] = 'mongodb://linebot:123456@ds015892.mlab.com:15892/linebot'
+mongo = PyMongo(app)
+
+app.config['MONGO2_DBNAME'] = 'googlemapapp'
+app.config['MONGO2_URI'] = 'mongodb://admin:123456@ds111940.mlab.com:11940/googlemapapp'
+mongo2 = PyMongo(app, config_prefix='MONGO2')
+
+# GoogleMap mongodb users 的insert
+@app.route('/addusers/<string:account>/<string:pwd>/<string:name>', methods=['GET'])
+def addusers(account, pwd, name):
+	users = mongo2.db.users
+	result = users.insert({'Account':account, 'UserName':name, 'PassWord':pwd, 'Count':0})
+	return dumps(result)
+	
+# GoogleMap mongodb users 的update
+@app.route('/updateUsersCount/<string:account>', methods=['GET'])
+def updateUsersCount(account):
+	num = updateUsersCountFunc(account)
+	if num == 0:
+		return 'Update Users Fail'
+	return 'Update Users Succeed'
+	
+def updateUsersCountFunc(account):
+	users = mongo2.db.users
+	
+	list = users.find({'Account':account})
+	if list.count() == 0:
+		return 0
+		
+	result = users.update_one({
+	'_id': list[0]['_id']
+	},{
+	  '$set': {
+		'Count': list[0]['Count'] + 1
+	  }
+	}, upsert=False)
+	
+	return result.matched_count
+	
+# GoogleMap mongodb users 的query
+@app.route('/queryCurrentUsersCount/<string:account>', methods=['GET'])
+def queryCurrentUsersCount(account):
+	users = mongo2.db.users
+	
+	list = users.find({'Account':account})
+	if list.count() == 0:
+		return json.dumps({'Response' : 0})
+	return json.dumps({'Response' : list[0]['Count']})
+	
+# GoogleMap mongodb users 的 update 和 star 的 delete
+@app.route('/deleteStarsAndUpdateUsersCount/<string:account>/<float:latitude>/<float:longitude>', methods=['GET'])
+def deleteStarsAndUpdateUsersCount(account, latitude, longitude):
+	deleteNum = deleteStarFunc(latitude, longitude)
+	if deleteNum == 0:
+		return json.dumps({'Response' : 0})
+	updateNum = updateUsersCountFunc(account)
+	if updateNum == 0:
+		return json.dumps({'Response' : 0})
+	return json.dumps({'Response' : 1})
+	
+# GoogleMap mongodb star 的insert
+@app.route('/addstar', methods=['GET'])
+def addstar():
+	RequestID = genStarRequestID() + 1
+	stars = mongo2.db.stars
+	result = stars.insert(genstar(RequestID))
+	return dumps(result)
+
+# GoogleMap mongodb star 的insert
+@app.route('/addstars/<int:num>', methods=['GET'])
+def addstars(num):
+	RequestID = genStarRequestID() + 1
+	stars = mongo2.db.stars
+	arr = []
+	for i in range(1, num + 1, 1):
+		arr.append(genstar(RequestID))
+		RequestID = RequestID + 1
+	stars.insert_many(arr)
+	return ''.join(['Add ', str(num) , ' Stars'])
+	
+def genStarRequestID():
+	stars = mongo2.db.stars
+	list = stars.find().sort('RequestID', -1)
+	if list.count() == 0:
+		return 0
+	return list[0]['RequestID']
+	
+def genstar(RequestID):
+	randPoint = random.randint(1, 3)
+	randLatitude = random.uniform(21.54, 25.18)
+	randLongitude = random.uniform(120.04, 121.59)
+	return {'latitude':randLatitude, 'longitude':randLongitude, 'point':randPoint, 'CreateDate':datetime.now(), 'RequestID':RequestID}
+	
+# GoogleMap mongodb star 的delete
+@app.route('/deleteStar/<float:latitude>/<float:longitude>', methods=['GET'])
+def deleteStar(latitude, longitude):
+	ret = str(deleteStarFunc(latitude, longitude))
+	return ret
+	
+def deleteStarFunc(latitude, longitude):
+	stars = mongo2.db.stars
+	result = stars.delete_many({'latitude':latitude, 'longitude':longitude,})
+	return result.deleted_count
+	
+# GoogleMap mongodb star 的query
+@app.route('/getAllStars', methods=['GET'])
+def getAllStars():
+	stars = mongo2.db.stars
+	return ''.join(['{\"Response\" : ', dumps(stars.find()), '}'])
+	
+# 躺躺喵 mongodb learntalk 的insert
+@app.route('/addlearntalk', methods=['GET'])
+def addlearntalk():
+	addlearntalk('test', '456');
+	return 'Add learntalk'
+	
+def addlearntalk(KeyWord, Content):
+	learntalk = mongo.db.learntalk
+	learntalk.insert({'KeyWord':KeyWord, 'Response':Content, 'CreateDate':datetime.now()})
+	
+# 躺躺喵 mongodb learntalk 的delete
+@app.route('/deletelearntalk/<string:keyword>', methods=['GET'])
+def deletelearntalk(keyword):
+	learntalk = mongo.db.learntalk
+	learntalk.delete_many({"_id": learntalk.find({'KeyWord':keyword}).sort('CreateDate', -1)[0]['_id']})
+	return 'Delete learntalk'
+	
+# 躺躺喵 mongodb learntalk 的query
+@app.route('/getlearntalk/<string:keyword>', methods=['GET'])
+def getlearntalk(keyword):
+	learntalk = mongo.db.learntalk
+	ret = ''
+	list = learntalk.find({'KeyWord':keyword}).sort('CreateDate', -1)
+	if list.count() == 0:
+		return json.dumps({'Response' : ret})
+	return json.dumps({'Response' : list[0]['Response']})
+	
 tasks = [
 	{
 		'id': 1,
@@ -295,14 +438,56 @@ def yahooDic(msg):
 def processMessage(msg):
 	ret = []
 	mat = []
+	
+	response = getlearntalk(msg)
+	jsonData = json.loads(response)
+	if len(jsonData['Response']) != 0:
+		ret.append(jsonData['Response'])
+		return ret
+	
 	pat = re.compile(r".*(掰掰).*")
 	mat = pat.findall(msg)
+	
 	if len(mat) == 0:
 		ret.append('朕知道了')
 		ret.append('可以退下了')
 	else:
 		ret.append('慢走不送')
+		
 	return ret
+	
+def learnTalkFunc(msg):
+	ret = []
+	
+	msg_learnTalk = unicode(msg, 'utf-8')
+	
+	flag = True # 紀錄是否要執行 addlearntalk()
+	
+	mat2 = []
+	pat2 = re.compile(ur"躺躺喵[;|；]忘記[;|；](.*)")
+	mat2 = pat2.findall(msg_learnTalk)
+	if len(mat2) != 0:
+		deletelearntalk(mat2[0])
+		ret.append('我最聽話~~')
+		flag = False
+	
+	if flag :
+		mat1 = []
+		pat1 = re.compile(ur"躺躺喵[;|；](.*)[;|；](.*)")
+		mat1 = pat1.findall(msg_learnTalk)
+		if len(mat1) != 0:
+			addlearntalk(mat1[0][0], mat1[0][1])
+			ret.append('好哦~好哦~')
+	
+	return ret
+	
+def isTalkFormat(msg):
+	mat = []
+	pat = re.compile(r"躺躺喵[;|；].*[;|；].*")
+	mat = pat.findall(msg)
+	if len(mat) == 0:
+		return False
+	return True
 	
 def parseKeyword(msg):
 	ret = ''
@@ -338,12 +523,14 @@ def genHelpData():
 	'"@technews":科技新聞',
 	'"@panx":科技新聞 ( 泛科技 ) ',
 	'"dic {word}":透過{word}查找yahoo字典',
-	'"help":教學說明']
+	'"help":教學說明', 
+	'躺躺喵學說話:躺躺喵；{關鍵字}；{回應}',
+	'躺躺喵忘記說話:躺躺喵；忘記；{關鍵字}']
 	ret = ';\n'.join(arr)
 	return ret 
 	
 def replyapi(accesstoken, msg):
-	channeltoken='channel token'
+	channeltoken='qYzIzIqCTWz82oZkTnO0A9Ggiz6bNkS1VHIMU/9kCww/M709Ff+PFDObSL+OFvhSQlLpYlTDmxkKgKS2SwbkoZs/tLEgzLlJYY+Wsf1yB6J//rQfZOuv9dLeCpt2fcBg984pT1wLpBT0uNEcmBuAaQdB04t89/1O/w1cDnyilFU='
 	
 	# 利用Line SDK的方式，做reply的作業。	
 	"""
@@ -382,11 +569,12 @@ def replyapi(accesstoken, msg):
 			data = genData(accesstoken, [yahooDic(t)])
 		elif Options.help.name == t:
 			data = genData(accesstoken, [genHelpData()])
+		elif isTalkFormat(t):
+			data = genData(accesstoken, learnTalkFunc(t))
 		else:
 			data = genData(accesstoken, processMessage(t))
-
+		
 	headers = genHeaders(channeltoken)
-	
 	urladdress = 'https://api.line.me/v2/bot/message/reply'
 	datajson = json.dumps(data)
 	# 依照Line Document當中的定義，準備好headers和data(json格式)。
