@@ -1,7 +1,8 @@
 #encoding=UTF-8
 
 from flask import Flask, request, abort
-from flask.ext.pymongo import PyMongo
+from flask_pymongo import PyMongo
+#from flask.ext.pymongo import PyMongo
 from datetime import datetime
 import requests
 import json 
@@ -10,7 +11,8 @@ from bs4 import BeautifulSoup as bs
 from aenum import Enum
 import random
 from bson.json_util import dumps
-from bson.json_util import loads
+from bson.json_util import loads 
+import sys
 
 requests.packages.urllib3.disable_warnings()
 
@@ -168,6 +170,30 @@ def getlearntalk(keyword):
 	if list.count() == 0:
 		return json.dumps({'Response' : ret})
 	return json.dumps({'Response' : list[0]['Response']})
+	
+# 躺躺喵 mongodb JCBUser 的insert
+@app.route('/addJCBUser', methods=['GET'])
+def addJCBUser():
+	JCBUser = mongo.db.JCBUser
+	JCBUser.insert({'Name':'1', 'txtCreditCard1':'2', 'txtCreditCard2':'3', 'txtCreditCard4':'4', 'txtEasyCard1':'5', 'txtEasyCard2':'6', 'txtEasyCard3':'7', 'txtEasyCard4':'8', 'CreateDate':datetime.now()})
+	return 'Add JCBUser'
+	
+# 躺躺喵 mongodb JCBUser 的query
+@app.route('/getJCBUser/<string:name>', methods=['GET'])
+def getJCBUser(name):
+	JCBUser = mongo.db.JCBUser
+	ret = ''
+	list = JCBUser.find({'Name':name})
+	if list.count() == 0:
+		return json.dumps({'Response' : ret})
+	return ''.join(['{\"Response\" : ', dumps(list[0]), '}'])
+	
+def findJCBUser(name):
+	JCBUser = mongo.db.JCBUser
+	list = JCBUser.find({'Name':name})
+	if list.count() == 0:
+		return 0
+	return list[0]
 	
 tasks = [
 	{
@@ -435,6 +461,143 @@ def yahooDic(msg):
 		ret += (ul.text.encode('utf-8') + '\n')
 	return ret
 	
+def JCBQuery(name):
+	JCBUser = findJCBUser(name)
+	
+	if JCBUser == 0:
+		return 'N/R'
+	
+	ret = [];
+	
+	while True:
+		try:
+			# parse time stamp and captcha
+			s = requests.Session()
+			res = s.get('https://ezweb.easycard.com.tw/Event01/captcha_A', verify = False)
+			soup = bs(res.text, "html.parser")
+			res2 = soup.select('script')[0]
+			# parse time stamp
+			m = re.search('setCaptcha\(\'(.*)\'\)', res2.text)
+			ret.append(''.join(['time stamp:', m.group(1)]))
+			
+			# parse captcha
+			m2 = re.search('setCP\(\'(.*)\'\)', res2.text)
+			ret.append(''.join(['captcha:', m2.group(1)]))
+			
+			# read EasyCard number
+			txtEasyCard1 = JCBUser['txtEasyCard1']
+			txtEasyCard2 = JCBUser['txtEasyCard2']
+			txtEasyCard3 = JCBUser['txtEasyCard3']
+			txtEasyCard4 = JCBUser['txtEasyCard4']
+			
+			# post parameters
+			payload = {'txtEasyCard1':txtEasyCard1,
+			'txtEasyCard2':txtEasyCard2,
+			'txtEasyCard3':txtEasyCard3,
+			'txtEasyCard4':txtEasyCard4,
+			'captcha':m2.group(1),
+			'method':'queryLoginDate',
+			'hidCaptcha':m.group(1)}
+			
+			# show query result
+			res1 = s.post('https://ezweb.easycard.com.tw/Event01/JCBLoginRecordServlet', data = payload)
+			# print res1.text
+			soup2 = bs(res1.text, "html.parser")
+			# show card number
+			ret.append(soup2.select('.card_num')[0].text)
+			res3 = soup2.select('.step2')
+			# show data
+			for r in res3[0].select('tr'):
+				if len(r.select('td')) > 0 :
+					ret.append(''.join([r.select('td')[0].text.strip(), r.select('td')[1].text.strip()]))
+					
+			if len(res3[0].select('tr')) > 0:
+				ret.append('====================')
+				break
+				
+		except Exception as e:
+			ret.append('Fail >>> Retry')
+			ret.append('====================')
+			time.sleep(5) # delays for 5 seconds
+			
+	return '\n'.join(ret)
+	
+def JCBLogin(name):
+	JCBUser = findJCBUser(name)
+	
+	if JCBUser == 0:
+		return 'N/R'
+	
+	ret = [];
+	
+	while True:
+		try:
+			# parse time stamp and captcha
+			s = requests.Session()
+			res = s.get('https://ezweb.easycard.com.tw/Event01/captcha_A', verify = False)
+			soup = bs(res.text, "html.parser")
+			res2 = soup.select('script')[0]
+			# parse time stamp
+			m = re.search('setCaptcha\(\'(.*)\'\)', res2.text)
+			ret.append(''.join(['time stamp:', m.group(1)]))
+			# parse captcha
+			m2 = re.search('setCP\(\'(.*)\'\)', res2.text)
+			ret.append(''.join(['captcha:', m2.group(1)]))
+			
+			# read EasyCard and CreditCard number
+			txtEasyCard1 = JCBUser['txtEasyCard1']
+			txtEasyCard2 = JCBUser['txtEasyCard2']
+			txtEasyCard3 = JCBUser['txtEasyCard3']
+			txtEasyCard4 = JCBUser['txtEasyCard4']
+			txtCreditCard1 = JCBUser['txtCreditCard1']
+			txtCreditCard2 = JCBUser['txtCreditCard2']
+			txtCreditCard4 = JCBUser['txtCreditCard4']
+			
+			# post parameters
+			payload = {
+			'accept':'',
+			'txtCreditCard1':txtCreditCard1,
+			'txtCreditCard2':txtCreditCard2,
+			'txtCreditCard4':txtCreditCard4,
+			'txtEasyCard1':txtEasyCard1,
+			'txtEasyCard2':txtEasyCard2,
+			'txtEasyCard3':txtEasyCard3,
+			'txtEasyCard4':txtEasyCard4,
+			'captcha':m2.group(1),
+			'method':'loginAccept',
+			'hidCaptcha':m.group(1),
+			'CP':m2.group(1)
+			}
+			
+			# request headers
+			headers = {'Accept':'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+			'Accept-Encoding':'gzip, deflate, br',
+			'Accept-Language':'zh-TW,zh;q=0.8,en-US;q=0.6,en;q=0.4',
+			'Cache-Control':'max-age=0',
+			'Connection':'keep-alive',
+			'Content-Length':'216',
+			'Content-Type':'application/x-www-form-urlencoded',
+			'Cookie':'JSESSIONID=EE27D568BECAD4D3D144C53280735188',
+			'Host':'ezweb.easycard.com.tw',
+			'Origin':'https://ezweb.easycard.com.tw',
+			'Referer':'https://ezweb.easycard.com.tw/Event01/JCBLoginServlet',
+			'Upgrade-Insecure-Requests':'1',
+			'User-Agent':'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/55.0.2883.87 Safari/537.36'
+			}
+			
+			res3 = s.post('https://ezweb.easycard.com.tw/Event01/JCBLoginServlet', data = payload)
+			soup2 = bs(res3.text, "html.parser")
+			if len(soup2.select('#content')) > 0 :
+				ret.append(soup2.select('#content')[0].text)
+				ret.append('====================')
+				break
+		except Exception as e:
+			ret.append('Fail >>> Retry')
+			ret.append('====================')
+			time.sleep(5) # delays for 5 seconds
+	
+	return '\n'.join(ret)
+	
 def processMessage(msg):
 	ret = []
 	mat = []
@@ -481,9 +644,40 @@ def learnTalkFunc(msg):
 	
 	return ret
 	
+def JCBFunc(msg):
+	ret = []
+	
+	msg_JCB = unicode(msg, 'utf-8')
+	
+	flag = True # 紀錄是否要執行 JCBLogin
+	
+	mat2 = []
+	pat2 = re.compile(ur"JCB[;|；]查詢[;|；](.*)")
+	mat2 = pat2.findall(msg_JCB)
+	if len(mat2) != 0:
+		ret.append(JCBQuery(mat2[0]))
+		flag = False
+	
+	if flag :
+		mat1 = []
+		pat1 = re.compile(ur"JCB[;|；]登錄[;|；](.*)")
+		mat1 = pat1.findall(msg_JCB)
+		if len(mat1) != 0:
+			ret.append(JCBLogin(mat1[0]))
+			
+	return ret
+	
 def isTalkFormat(msg):
 	mat = []
 	pat = re.compile(r"躺躺喵[;|；].*[;|；].*")
+	mat = pat.findall(msg)
+	if len(mat) == 0:
+		return False
+	return True
+	
+def isJCBFormat(msg):
+	mat = []
+	pat = re.compile(r"JCB[;|；].*[;|；].*")
 	mat = pat.findall(msg)
 	if len(mat) == 0:
 		return False
@@ -571,6 +765,8 @@ def replyapi(accesstoken, msg):
 			data = genData(accesstoken, [genHelpData()])
 		elif isTalkFormat(t):
 			data = genData(accesstoken, learnTalkFunc(t))
+		elif isJCBFormat(t):
+			data = genData(accesstoken, JCBFunc(t))
 		else:
 			data = genData(accesstoken, processMessage(t))
 		
