@@ -13,6 +13,7 @@ import random
 from bson.json_util import dumps
 from bson.json_util import loads 
 import sys
+import time
 
 requests.packages.urllib3.disable_warnings()
 
@@ -467,8 +468,8 @@ def JCBQuery(name):
 	if JCBUser == 0:
 		return 'N/R'
 	
-	ret = [];
-	
+	ret = []
+	count = 0
 	while True:
 		try:
 			# parse time stamp and captcha
@@ -512,12 +513,11 @@ def JCBQuery(name):
 					ret.append(''.join([r.select('td')[0].text.strip(), r.select('td')[1].text.strip()]))
 					
 			if len(res3[0].select('tr')) > 0:
-				ret.append('====================')
+				ret.append(''.join(['retry count:', str(count)]))
 				break
 				
 		except Exception as e:
-			ret.append('Fail >>> Retry')
-			ret.append('====================')
+			count = count + 1
 			time.sleep(5) # delays for 5 seconds
 			
 	return '\n'.join(ret)
@@ -528,8 +528,8 @@ def JCBLogin(name):
 	if JCBUser == 0:
 		return 'N/R'
 	
-	ret = [];
-	
+	ret = []
+	count = 0
 	while True:
 		try:
 			# parse time stamp and captcha
@@ -589,11 +589,10 @@ def JCBLogin(name):
 			soup2 = bs(res3.text, "html.parser")
 			if len(soup2.select('#content')) > 0 :
 				ret.append(soup2.select('#content')[0].text)
-				ret.append('====================')
+				ret.append(''.join(['retry count:', str(count)]))
 				break
 		except Exception as e:
-			ret.append('Fail >>> Retry')
-			ret.append('====================')
+			count = count + 1
 			time.sleep(5) # delays for 5 seconds
 	
 	return '\n'.join(ret)
